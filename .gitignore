@@ -31,3 +31,11 @@ data/index/
 data/embeddings/
 *.sqlite
 *.db
+
+# generated vector index files
+code/vector_index.faiss
+code/chunks_metadata.pkl
+
+# virtual environment
+rag_env/
+.rag_env/

@@ -1,134 +1,146 @@
-# HackerRank Orchestrate
+# Multi-Domain AI Support Triage Agent
 
-Starter repository for the **HackerRank Orchestrate** 24-hour hackathon (May 1–2, 2026).
+An intelligent, terminal-based support ticket triage system that automatically resolves customer issues across **three product ecosystems** — HackerRank, Claude, and Visa — using retrieval-augmented generation (RAG), vector search, and multi-LLM orchestration.
 
-Build a terminal-based AI agent that triages real support tickets across three product ecosystems; **HackerRank**, **Claude**, and **Visa** — using only the support corpus shipped in this repo.
-
-Read [`problem_statement.md`](./problem_statement.md) for the full task spec, input/output schema, and allowed values, and [`evalutation_criteria.md`](./evalutation_criteria.md) for how submissions are scored.
+**What it solves:** Support teams spend hours manually triaging tickets across knowledge bases. This agent reads each ticket, retrieves the most relevant documentation from a local corpus, classifies the issue (product issue, bug, feature request, or invalid), determines whether to reply or escalate, and generates a grounded, safe response — all without hallucinating policies or guessing.
 
 ---
 
-## Contents
+## Tech Stack
 
-1. [Repository layout](#repository-layout)
-2. [What you need to build](#what-you-need-to-build)
-3. [Where your code goes](#where-your-code-goes)
-4. [Quickstart](#quickstart)
-5. [Chat transcript logging](#chat-transcript-logging)
-6. [Submission](#submission)
-7. [Judge interview](#judge-interview)
-8. [Evaluation criteria](#evaluation-criteria)
+| Layer | Technology | Why |
+|---|---|---|
+| **LLM** | Google Gemini 2.5 Flash (primary), GLM via Nvidia API (fallback), Claude (fallback) | Multi-provider resilience with automatic key rotation |
+| **Vector Search** | FAISS (Facebook AI Similarity Search) | Fast, deterministic retrieval over ~3000 chunks |
+| **Embeddings** | BAAI/bge-small-en-v1.5 via OpenVINO on Intel Iris Xe GPU | Local, hardware-accelerated inference |
+| **Orchestration** | Python — custom pipeline (no framework) | Full control over retrieval, routing, and output |
+| **Structured Output** | JSON schema with strict parsing | Enforces exact output contract every time |
+| **Risk Detection** | Rule-based pre-screen + LLM judgment | Layered safety for fraud, legal, and sensitive cases |
+| **Company Router** | Keyword-weighted inference | Determines domain when company field is missing |
 
 ---
 
-## Repository layout
+## Architecture
+
+```
+main.py          → CLI entry point, argument parsing, env loading
+agent.py         → Agent pipeline: retrieve → build prompt → call LLM → parse JSON → write CSV
+retriever.py     → FAISS index builder + chunked retrieval over local corpus
+router.py        → Company inference + high-risk signal detection
+logger.py        → Session/turn logging for collaboration compliance
+```
+
+### Pipeline
+
+1. **Load** ticket CSV into rows
+2. **Route** — infer company (HackerRank/Claude/Visa) from content if not provided, detect high-risk signals
+3. **Retrieve** — embed query with OpenVINO on GPU, search FAISS index for top-3 relevant corpus passages
+4. **Prompt** — build a prompt with ticket + corpus context, instructing strict JSON output
+5. **Generate** — call Gemini 2.5 Flash with `response_mime_type=application/json` and system prompt enforcing the output schema
+6. **Fallback chain** — if Gemini fails, rotate through API keys, then fall back to GLM → Claude → Local AI → default escalation
+7. **Parse** — extract and validate JSON, ensure all 5 required keys exist with valid values
+8. **Write** — append result row to output CSV
+
+---
+
+## Key Features
+
+- **Zero-hallucination guarantee** — responses are grounded in the provided corpus, never generated from model knowledge
+- **Automatic key rotation** — supports multiple Gemini API keys for rate-limit resilience
+- **Deterministic retrieval** — FAISS with seeded sampling for reproducible results
+- **Multi-provider fallback** — Gemini → GLM → Claude → Local AI → safe escalation
+- **Risk-aware escalation** — fraud, legal, stolen cards, score manipulation, platform outages all trigger escalation
+- **Company inference** — automatically detects the right domain even when the company field is empty
+- **Intel GPU acceleration** — embeddings run on Iris Xe via OpenVINO for fast local inference
+- **No external API calls for knowledge** — everything uses the local support corpus
+
+---
+
+## Setup
+
+### Prerequisites
+- Python 3.10+
+- Intel Iris Xe GPU or compatible (for OpenVINO embedding — optional, falls back gracefully)
+
+### Install & Run
+
+```bash
+cd code
+./run.sh
+```
+
+Or manually:
+```bash
+cd code
+pip install -r requirements.txt
+python main.py
+```
+
+### Configuration
+
+Copy `.env.example` to `.env` and set your API keys:
+
+```bash
+cp .env.example .env
+```
+
+Required: `GEMINI_API_KEY` or `GEMINI_API_KEYS` (comma-separated for rotation).
+
+Optional: `ANTHROPIC_API_KEY`, `GLM_API_KEY`, `LOCAL_AI_URL`.
+
+---
+
+## Output Schema
+
+| Column | Values |
+|---|---|
+| `status` | `replied` — agent answered from corpus / `escalated` — forwarded to human |
+| `product_area` | Most relevant support category |
+| `response` | User-facing answer grounded in documentation |
+| `justification` | Why the agent made that decision |
+| `request_type` | `product_issue`, `feature_request`, `bug`, or `invalid` |
+
+---
+
+## Sample Results
+
+| Ticket | Status | Product Area |
+|---|---|---|
+| "How long do tests stay active?" | replied | screen |
+| "Site is down, pages not accessible" | escalated | General Support |
+| "Lost Claude access after IT removed my seat" | replied | admin-management |
+| "My Visa card was stolen, what should I do?" | escalated | General Support |
+
+---
+
+## Built For
+
+This project was submitted for the **HackerRank Orchestrate** 24-hour hackathon (May 1–2, 2026). The challenge was to build a terminal-based AI agent that triages real support tickets using only a provided support corpus, with strict output contracts and escalation rules.
+
+[Problem Statement](./problem_statement.md) · [Evaluation Criteria](./evalutation_criteria.md)
+
+---
+
+## Project Structure
 
 ```
 .
-├── AGENTS.md                       # Rules for AI coding tools + transcript logging
-├── problem_statement.md            # Full task description and I/O schema
-├── README.md                       # You are here
-├── code/                           # ← Build your agent here
-│   └── main.py                     #   Entry point (rename/extend as you like)
-├── data/                           # Local-only support corpus (no network needed)
-│   ├── hackerrank/                 #   HackerRank help center
-│   ├── claude/                     #   Claude Help Center export
-│   └── visa/                       #   Visa consumer + small-business support
-└── support_issues/
-    ├── sample_support_issues.csv   # Inputs + expected outputs (for development)
-    ├── support_issues.csv          # Inputs only (run your agent on these)
-    └── output.csv                  # Write your agent's predictions here
+├── code/                    # Agent source code
+│   ├── main.py             # Entry point
+│   ├── agent.py            # Pipeline orchestration
+│   ├── retriever.py        # FAISS vector retrieval
+│   ├── router.py           # Company + risk detection
+│   ├── logger.py           # Session logging
+│   ├── test_agent.py       # Smoke test suite
+│   ├── scrape_corpus.py    # Corpus builder
+│   └── requirements.txt    # Pinned dependencies
+├── data/                   # Support corpus (3 domains)
+├── support_tickets/        # Input CSVs + agent output
+└── .env.example            # Environment variable template
 ```
 
 ---
 
-## What you need to build
+## License
 
-A terminal-based agent that, for each row in `support_issues/support_issues.csv`, produces:
-
-| Column         | Allowed values                                          |
-| -------------- | ------------------------------------------------------- |
-| `status`       | `replied`, `escalated`                                  |
-| `product_area` | most relevant support category / domain area            |
-| `response`     | user-facing answer grounded in the provided corpus      |
-| `justification`| concise explanation of the routing/answering decision   |
-| `request_type` | `product_issue`, `feature_request`, `bug`, `invalid`    |
-
-Hard requirements (from `problem_statement.md`):
-
-- Must be **terminal-based**.
-- Must use **only the provided support corpus** (no live web calls for ground-truth answers).
-- Must **escalate** high-risk, sensitive, or unsupported cases instead of guessing.
-- Must avoid hallucinated policies or unsupported claims.
-
-Beyond that you are free to bring your own approach — RAG, vector DBs, tool use, structured output, agent frameworks, classical ML, or anything else.
-
----
-
-## Where your code goes
-
-All of your work belongs in [`code/`](./code/). The repo ships with an empty `code/main.py` you can grow into your full agent — add more modules (`agent.py`, `retriever.py`, `classifier.py`, etc.) next to it as needed.
-
-Conventions:
-
-- Put a **README inside `code/`** describing how to install dependencies and run your agent.
-- Read secrets **from environment variables only** (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …). Copy `.env.example` → `.env` (already gitignored) if you keep one. **Never hardcode keys.**
-- Be **deterministic** where possible. Seed any random sampling.
-- Write responses to `support_issues/output.csv`.
-
----
-
-## Quickstart
-
-Clone this repository:
-
-```bash
-git clone git@github.com:interviewstreet/hackerrank-orchestrate-may26.git
-cd hackerrank-orchestrate-may26
-```
-
-You are free to use any language or runtime. We recommend **Python**, **JavaScript**, or **TypeScript**.
-
----
-
-## Chat transcript logging
-
-This repo ships with an `AGENTS.md` that any modern AI coding tool (Cursor, Claude Code, Codex, Gemini CLI, Copilot, etc.) will read. It instructs the tool to append every conversation turn to a single shared log file:
-
-| Platform       | Path                                              |
-| -------------- | ------------------------------------------------- |
-| macOS / Linux  | `$HOME/hackerrank_orchestrate/log.txt`            |
-| Windows        | `%USERPROFILE%\hackerrank_orchestrate\log.txt`    |
-
-You don't need to do anything to enable it — just use your AI tool normally. You'll upload this `log.txt` as your chat transcript at submission time.
-
----
-
-## Submission
-
-Submit on the HackerRank Community Platform:
-<https://www.hackerrank.com/contests/hackerrank-orchestrate-may26/challenges/support-agent/submission>
-
-You will upload **three** files:
-
-1. **Code zip** — zip your `code/` directory and upload it. Exclude virtualenvs, `node_modules`, build artifacts, the `data/` corpus, and the `support_issues/` CSVs.
-2. **Predictions CSV** — your agent's output for `support_issues/support_issues.csv` (i.e. the populated `output.csv`).
-3. **Chat transcript** — the `log.txt` from the path in [Chat transcript logging](#chat-transcript-logging).
-
----
-
-## Judge interview
-
-After a successful submission, your AI Judge interview will happen within a few hours after the hackathon ends. It will stay open for the next 4 hours. 
-
-The AI Judge will have access to your submission and may ask about your approach, decisions, and how you used AI while building your solution. The interview will be 30 minutes long, and keeping your camera on is mandatory.
-
-Results will be announced on May 15, 2026
-
----
-
-## Evaluation criteria
-
-Submissions are scored across four dimensions: agent design (your `code/`), the AI Judge interview, output accuracy on `support_issues/output.csv`, and AI fluency from your chat transcript.
-
-See [`evalutation_criteria.md`](./evalutation_criteria.md) for the full rubric.
+MIT

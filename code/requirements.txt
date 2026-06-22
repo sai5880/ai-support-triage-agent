@@ -1,0 +1,12 @@
+anthropic==0.97.0
+google-genai==1.74.0
+openai==2.33.0
+transformers==4.57.6
+optimum[openvino]==2.1.0
+optimum-intel==1.27.0
+faiss-cpu==1.13.2
+sentence-transformers==2.6.1
+langchain-text-splitters==1.1.2
+torch==2.8.0
+requests==2.33.1
+beautifulsoup4==4.13.4
